@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     SQL_ECHO: bool = False
 
     # ---------- 被测 / 裁判 LLM ----------
-    LLM_MODEL: str = "glm-4-plus"
+    LLM_MODEL: str = "glm-4.5-air"
     LLM_API_KEY: str = ""
     LLM_BASE_URL: Optional[str] = None
     LLM_TEMPERATURE: float = 0.0
