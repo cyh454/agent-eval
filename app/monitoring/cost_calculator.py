@@ -36,7 +36,10 @@ PRICING: Dict[str, Dict[str, float]] = {
     "embedding-2": {"prompt": 0.000070, "completion": 0.0},
 }
 
-DEFAULT_MODEL = "glm-4-plus"
+# 成本计算的兜底模型：agent_config 未指定 model 时，按它的单价计价。
+# 必须与 Settings.LLM_MODEL 的默认值保持一致——用一个你根本没在跑的模型计价，
+# 算出来的成本就是错的（比如 glm-4-plus 比 glm-4.5-air 贵 2.5~6 倍）。
+DEFAULT_MODEL = "glm-4.5-air"
 _DEFAULT_PRICING = PRICING[DEFAULT_MODEL]
 
 
