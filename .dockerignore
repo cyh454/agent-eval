@@ -1,0 +1,36 @@
+# 密钥与环境配置：绝不进入镜像
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 版本控制
+.git
+.gitignore
+
+# WorkBuddy 工作日志（本地分析记录，与镜像无关）
+.workbuddy/
+
+# Python 缓存与产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地文档与临时文件
+*.log
+*.sqlite3
+*.db

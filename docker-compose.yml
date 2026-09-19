@@ -1,0 +1,49 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    container_name: agent_eval_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: agent_eval
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18+ 镜像的数据目录为 /var/lib/postgresql/<主版本>/docker，
+      # 挂载到旧路径 /var/lib/postgresql/data 会被判定为旧版布局而拒绝启动。
+      - postgres_data:/var/lib/postgresql
+      - ./db_init/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d agent_eval"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: agent_eval_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      # 宿主开在 8010：8000 留给被测 Agent（如 vehicle-diagnosis-agent），
+      # 两边同占宿主 8000 时本机进程胜出，探测会把 agent-eval 自己当成被测对象。
+      - "8010:8000"
+    # 挂载 .env 注入 LLM_* 配置；DATABASE_URL 需指向容器内的 db 服务，
+    # 因此显式覆盖，避免沿用宿主机地址 localhost:5433。
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://admin:secret@db:5432/agent_eval
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  postgres_data:

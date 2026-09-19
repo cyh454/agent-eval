@@ -1,0 +1,39 @@
+# 环境变量 / 密钥 —— 切勿提交
+.env
+.env.*
+!.env.example
+
+# WorkBuddy 工作日志（本地分析记录，与项目无关）
+.workbuddy/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 测试 / 覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 系统
+.DS_Store
+Thumbs.db

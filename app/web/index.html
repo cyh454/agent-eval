@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="8FvfDOQ9QSm8tTKDS66ELJ">
+<head data-page-node-id="OAsCBFgg2hbKaB8YCqthSS">
+<meta charset="utf-8" data-page-node-id="RdBGMbKBdm4IfoJs5NGLEI">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="WsyZHUdeA1FcMxF0WVtPET">
+<title>Agent 一键评估</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --line: #e3e2de;
+    --text: #2c2c2a;
+    --muted: #6b6a66;
+    --accent: #185fa5;
+    --accent-soft: #e6f1fb;
+    --ok: #0f6e56;
+    --ok-soft: #e1f5ee;
+    --warn: #854f0b;
+    --warn-soft: #faeeda;
+    --bad: #a32d2d;
+    --bad-soft: #fcebeb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 64px;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type=text], input[type=number], select {
+    width: 100%; padding: 9px 12px; font-size: 14px; font-family: inherit;
+    border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text);
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 200px; }
+  .url-row { display: flex; gap: 10px; }
+  .url-row input { flex: 1; }
+  button {
+    padding: 9px 20px; font-size: 14px; font-family: inherit; cursor: pointer;
+    border-radius: 8px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: #fff; color: var(--accent); }
+  button.danger { background: #fff; color: var(--bad); border-color: var(--bad); }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .msg { font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-top: 12px; }
+  .msg.ok { background: var(--ok-soft); color: var(--ok); }
+  .msg.warn { background: var(--warn-soft); color: var(--warn); }
+  .msg.bad { background: var(--bad-soft); color: var(--bad); }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .grid4 { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+  .score { flex: 1 1 150px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .score .k { font-size: 12px; color: var(--muted); }
+  .score .v { font-size: 22px; font-weight: 500; margin-top: 2px; }
+  .score .d { font-size: 12px; margin-top: 2px; }
+  .bar { height: 6px; background: #eeedea; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .overall { font-size: 40px; font-weight: 500; line-height: 1.1; }
+  .overall small { font-size: 14px; color: var(--muted); font-weight: 400; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 12px; }
+  .tag.ok { background: var(--ok-soft); color: var(--ok); }
+  .tag.bad { background: var(--bad-soft); color: var(--bad); }
+  .tag.run { background: var(--accent-soft); color: var(--accent); }
+  .kv { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 12px; }
+  pre {
+    white-space: pre-wrap; word-break: break-all; margin: 6px 0 0;
+    font-size: 12px; color: var(--muted); background: #fafaf8;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto;
+  }
+  .case { border: 1px solid var(--line); border-radius: 10px; margin-top: 10px; overflow: hidden; }
+  .case-head {
+    display: flex; align-items: center; gap: 10px; padding: 11px 14px;
+    cursor: pointer; background: #fcfcfb;
+  }
+  .case-head:hover { background: #f6f5f3; }
+  .case-q { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .case-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .case-body { padding: 14px; border-top: 1px solid var(--line); background: #fff; }
+  .chain { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .chain span { background: #f1efe8; border-radius: 6px; padding: 3px 10px; font-size: 12px; }
+  .chain i { color: #a3a29e; font-style: normal; }
+  .tool { border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin-bottom: 8px; font-size: 13px; }
+  .tool b { font-weight: 500; }
+  .tool .io { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+  .chip { background: #fafaf8; border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; font-size: 12px; color: var(--muted); }
+  .warn-chip { background: #fdf6e3; border-color: #e0cf9a; color: #7a5c10; margin: 6px 0 10px; display: inline-block; }
+  .reason { background: #fafaf8; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+  .reason b { font-weight: 500; }
+  .up { color: var(--ok); }
+  .down { color: var(--bad); }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tbl th, .tbl td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+  .tbl th { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .hidden { display: none; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+</style>
+</head>
+<body data-page-node-id="a5g3lm17VoqcUBw67FTC7F">
+<div class="wrap" data-page-node-id="OgJEMlgEt9wU5IF75u9iE8">
+  <h1 data-page-node-id="CCPEjsbhheIj7XBeDE91Fp">Agent 一键评估</h1>
+  <p class="sub" data-page-node-id="efoPonVAwsb5zRJWj5CDGx">填入你的 Agent 服务地址，自动识别对话接口并跑完评测集，给出四维度得分、执行轨迹与评测报告。</p>
+
+  <div class="card" data-page-node-id="rMhu8GBHmCeCr0OxtTlwnR">
+    <label for="baseUrl" data-page-node-id="5EoeCMbEur7juC5pIYORcn">Agent 服务地址</label>
+    <div class="url-row" data-page-node-id="PgrhH57YK9Udhp2FddjrN1">
+      <input type="text" id="baseUrl" placeholder="http://localhost:8000" value="http://localhost:8000" data-page-node-id="hC0ONlBG7KEW9r87wyWCD7">
+      <button class="ghost" id="probeBtn" type="button" data-page-node-id="3OCgn1xdGqqDJC4C7PJ8Xq">探测</button>
+    </div>
+
+    <div class="row" style="margin-top:14px" data-page-node-id="CIbZVEuvcm9PVID8F8HptB">
+      <div data-page-node-id="JokpGKNA4P6E6hBmOs46cE">
+        <label for="dataset" data-page-node-id="hQMjAJoDN3LPoSFeHvK4pG">评测数据集</label>
+        <select id="dataset" data-page-node-id="lEWO1g6CLYBWbK4lBBjxN1"></select>
+      </div>
+      <div data-page-node-id="zWaK31TZyrXQ5XlC4ovsyo">
+        <label for="limit" data-page-node-id="HBaq5rICeqjHEd0mHuativ">用例条数（跑全部请勾选右侧）</label>
+        <div class="url-row" data-page-node-id="74VubclcARfWPasb1QAM7N">
+          <input type="number" id="limit" value="10" min="1" max="200" data-page-node-id="RiOFEy7unkQK2TeLlSb3N6">
+          <label style="display:flex;align-items:center;gap:6px;margin:0;white-space:nowrap" data-page-node-id="93TOQcMDAS6KDGWRx0zlqH">
+            <input type="checkbox" id="runAll" style="width:auto" data-page-node-id="s0B4jSoJN3FMjI23lOlEwe"> 全部
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <details data-page-node-id="HUmG9EguErRCCS8KAg7EPb">
+      <summary data-page-node-id="FPTXZOBytDEjjbWvT0cBkG">高级选项（自动识别不准时手工指定）</summary>
+      <div class="row" style="margin-top:12px" data-page-node-id="k95kn81XhfeR1Napv3z61U">
+        <div data-page-node-id="52odXDDN43nTNsvjyk1EaS"><label data-page-node-id="c153xg8sXSHygP6CEFwtFL">对话路径 chat_path</label><input type="text" id="chatPath" placeholder="/api/v1/diagnosis/chat" data-page-node-id="B6MY3iVDi6gkiIOZxitx1T"></div>
+        <div data-page-node-id="Huv32y245TJXkPmdDgE89M"><label data-page-node-id="L8GdLZnejtdbSYh0yYCzwz">提问字段 request_field</label><input type="text" id="requestField" placeholder="message" data-page-node-id="6pXDVOQWBwfbeKeiXmdHMA"></div>
+      </div>
+      <div class="row" style="margin-top:10px" data-page-node-id="Y6OshG4BXwSHKiYV8nFLRe">
+        <div data-page-node-id="xs85g1dVz7JmQCec6PZr8R"><label data-page-node-id="kS8bWfWyMarXZX6FKZ2Vlr">回复字段 reply_field</label><input type="text" id="replyField" placeholder="reply" data-page-node-id="21ytU9m2DzvfzHHBwS4Dl0"></div>
+        <div data-page-node-id="Y0XBzgY95h4TaeaQr6FqwJ"><label data-page-node-id="B8GlWjZlbSbH257j02iyxA">工具轨迹字段 tool_calls_field</label><input type="text" id="toolField" placeholder="tool_calls" data-page-node-id="9oUCMg7pQclwJIXxxXjZkG"></div>
+      </div>
+    </details>
+
+    <div style="margin-top:16px" data-page-node-id="GGalruoT1rxfF78RWRqngZ">
+      <button id="startBtn" type="button" data-page-node-id="afZVdhDGyxqBuGBL3xa3PV">开始评估</button>
+    </div>
+    <div id="probeMsg" data-page-node-id="b1SaEQESiA6hIVALRgTRMO"></div>
+    <p class="hint" data-page-node-id="PktBLpHbGhmC34J73Z4eWo">agent-eval 必须和被测服务跑在同一台机器：容器内运行时 localhost 指容器自己，需改填 host.docker.internal。另外别把地址填成 agent-eval 自己（默认占 8000），否则会评测到自己。</p>
+  </div>
+
+  <div class="card hidden" id="resultCard" data-page-node-id="AQCmBGsp2DCnOOBT6xBxbx">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap" data-page-node-id="QlAVNSfiUFGPZN7mYFZHKj">
+      <div data-page-node-id="ymyhUgjbCKcZT3FjsMLuIf">
+        <div class="overall" data-page-node-id="lIbg3trDrM1NucR2LRSUWH"><span id="overall" data-page-node-id="ylSnipQJ9RZiXBXfGVtG8t">--</span><small data-page-node-id="RyCAUsP1KvEtEGZui2x7vs"> / 100 综合分</small></div>
+        <div class="kv" data-page-node-id="4ZUX8K8paS8f7G8smX0FbV">
+          <span data-page-node-id="yG0mjxfaqJC0R1dv9wuilU">状态 <span id="status" class="tag run" data-page-node-id="O5YvXdB5B93P0FIPTF4vDP">准备中</span></span>
+          <span id="progress" data-page-node-id="Hn7M7q5Prh4LehsTvgqxxV">0 / 0</span>
+        </div>
+      </div>
+      <div style="text-align:right;font-size:13px;color:var(--muted)" data-page-node-id="1zECyZQDpGscVMGcZGs9h6">
+        <div id="totals" data-page-node-id="Un4hwfSyCAgpOwuZlnpTPQ"></div>
+      </div>
+    </div>
+
+    <div class="grid4" id="scores" data-page-node-id="Pj6ovOm9mMZeIFdPiYWFjJ"></div>
+
+    <div class="actions" data-page-node-id="8E6F3GFTkNlQb0w56hEADY">
+      <button class="ghost" id="reportBtn" type="button" data-page-node-id="kerfP5TEcFwTbq8kBGzAs0">导出评测报告</button>
+      <button class="danger hidden" id="cancelBtn" type="button" data-page-node-id="bPVLw3fjWHt7MXunCQR6kz">标记取消</button>
+    </div>
+
+    <div id="compareBox" style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px" data-page-node-id="IjHbvVLcwHgNRA3UVC3wBG">
+      <label for="baseline" style="margin-bottom:6px" data-page-node-id="05gXRybFDUp1BFTFQa7ZgH">对比基线（可选，看分数变化）</label>
+      <div class="url-row" data-page-node-id="pDrkiSZT18wQ8lp7yU8SAV">
+        <select id="baseline" data-page-node-id="uWr9TwhL05PTgtOEEngLuE"></select>
+        <button class="ghost" id="cmpBtn" type="button" data-page-node-id="UpPDVnKqG5GUpiGlU7cH3y">对比</button>
+      </div>
+      <div id="cmpResult" data-page-node-id="o7EJGIKaEG5rhdXY0Czicc"></div>
+    </div>
+
+    <div id="metricsBox" data-page-node-id="vzfrEEI0C58LHHaGWgqUdW"></div>
+    <div id="execBox" data-page-node-id="2UbWVVmx4rGr5HwEuEyFY8"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentId = null;
+// LLM 裁判存在随机波动，幅度在此区间内的分数变化不足以判定为真实改善/退化
+const NOISE_BAND = 5;
+
+const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const num = (v, d) => (v == null ? (d == null ? "--" : d) : Number(v).toFixed(1));
+const tagClass = (s) => (s === "completed" ? "ok" : s === "running" ? "run" : "bad");
+
+async function loadDatasets() {
+  try {
+    const list = await (await fetch("/datasets/?limit=100")).json();
+    const sel = $("dataset");
+    sel.innerHTML = "";
+    list.forEach((d) => {
+      const o = document.createElement("option");
+      o.value = d.id;
+      const empty = !(d.test_case_count > 0);
+      o.textContent = `#${d.id} ${d.name}${empty ? "（空）" : ""}（${d.test_case_count ?? 0} 条）`;
+      sel.appendChild(o);
+    });
+    // 默认选中用例数最多的数据集——下拉按 id 倒序，第一个可能是空的历史数据集
+    let best = null;
+    list.forEach((d) => {
+      if (!best || (d.test_case_count || 0) > (best.test_case_count || 0)) best = d;
+    });
+    if (best) sel.value = best.id;
+    if (!list.length) {
+      $("probeMsg").innerHTML = '<div class="msg warn">还没有数据集，请先运行 scripts/import_vehicle_cases.py 导入。</div>';
+    }
+  } catch (e) {
+    $("probeMsg").innerHTML = '<div class="msg bad">加载数据集失败：' + e + '</div>';
+  }
+}
+
+async function loadBaselines() {
+  try {
+    const list = await (await fetch("/web/history?limit=50")).json();
+    const sel = $("baseline");
+    sel.innerHTML = '<option value="">不选</option>';
+    list.forEach((h) => {
+      if (h.id === currentId) return;
+      if (h.status !== "completed" && h.status !== "partial") return;
+      const o = document.createElement("option");
+      o.value = h.id;
+      o.textContent = `#${h.id} ${h.agent_name || "?"}　${h.scores.overall == null ? "--" : Number(h.scores.overall).toFixed(1)} 分`;
+      sel.appendChild(o);
+    });
+  } catch (e) { /* 对比是可选功能，失败静默 */ }
+}
+
+async function probe() {
+  const base = $("baseUrl").value.trim();
+  if (!base) return;
+  $("probeMsg").innerHTML = '<div class="msg">正在探测 ' + esc(base) + ' ...</div>';
+  try {
+    const data = await (await fetch("/web/probe", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({base_url: base}),
+    })).json();
+    if (data.self_reference) {
+      $("probeMsg").innerHTML = '<div class="msg bad">已拦截：' + esc(data.error || "目标地址是 agent-eval 自己") +
+        '。请把端口改成被测 Agent 的地址，不要评自己。</div>';
+    } else if (data.ok) {
+      $("chatPath").value = data.chat_path || "";
+      $("requestField").value = data.request_field || "";
+      $("replyField").value = data.reply_field || "";
+      $("toolField").value = data.tool_calls_field || "";
+      $("probeMsg").innerHTML = '<div class="msg ok">识别成功：POST ' + esc(data.chat_path) +
+        '　提问 <b>' + esc(data.request_field) + '</b>　回复 <b>' + esc(data.reply_field) + '</b></div>';
+    } else {
+      $("probeMsg").innerHTML = '<div class="msg warn">探测失败：' + esc(data.error || "未知原因") +
+        '。可手工填写高级选项后直接开始。</div>';
+    }
+  } catch (e) {
+    $("probeMsg").innerHTML = '<div class="msg bad">探测请求失败：' + esc(e) + '</div>';
+  }
+}
+
+function renderScores(scores, delta) {
+  const items = [
+    ["质量 Quality", "quality"],
+    ["性能 Performance", "performance"],
+    ["安全 Security", "security"],
+    ["任务完成度 Task", "task_completion"],
+  ];
+  $("scores").innerHTML = items.map(([label, key]) => {
+    const v = scores[key];
+    const w = v == null ? 0 : Math.max(0, Math.min(100, Number(v)));
+    let d = "";
+    if (delta && delta[key] != null) {
+      const dv = Number(delta[key]);
+      const noise = Math.abs(dv) <= NOISE_BAND;
+      const cls = noise ? "" : (dv > 0 ? "up" : "down");
+      d = '<div class="d ' + cls + '">' + (dv > 0 ? "+" : "") + dv.toFixed(1) +
+        (noise ? "（噪声区间）" : " 对比基线") + "</div>";
+    }
+    return '<div class="score"><div class="k">' + label + '</div><div class="v">' + num(v) +
+      '</div>' + d + '<div class="bar"><i style="width:' + w + '%"></i></div></div>';
+  }).join("");
+}
+
+function renderExecutions(list) {
+  if (!list || !list.length) { $("execBox").innerHTML = ""; return; }
+  const cards = list.map((e) => {
+    const dur = e.duration == null ? "--" : Number(e.duration).toFixed(2) + "s";
+    const chain = (e.tools || []).map((t) => "<span>" + esc(t.name) + "</span>").join('<i>→</i>');
+    const toolDetails = (e.tools || []).map((t) =>
+      '<div class="tool"><b>' + esc(t.name) + '</b>' +
+      '<div class="io">入参 ' + esc(t.arguments) + '</div>' +
+      '<div class="io">返回 ' + esc(t.output) + '</div></div>').join("");
+
+    const ind = e.indicators || {};
+    const chips = Object.keys(ind).filter((k) => ind[k] != null).map((k) => {
+      let v = ind[k];
+      if (v === true) v = "是"; else if (v === false) v = "否";
+      else if (typeof v === "number") v = Number(v).toFixed(2);
+      return '<span class="chip">' + esc(k) + " " + esc(v) + "</span>";
+    }).join("");
+
+    const r = e.reasoning || {};
+    const reasons = [["质量", r.quality], ["安全", r.security], ["任务", r.task]]
+      .filter(([, v]) => v).map(([k, v]) => '<div class="reason"><b>' + k + '</b>　' + esc(v) + "</div>").join("");
+
+    const src = e.sources || {};
+    const srcNote = src.token === "estimated"
+      ? '<div class="chip warn-chip">Token 与成本为本地估算（被测服务未上报用量），仅供横向比较</div>'
+      : (src.token === "missing"
+        ? '<div class="chip warn-chip">未获得 Token 用量，性能维度仅按延迟计分</div>' : "");
+
+    return '<div class="case"><div class="case-head" data-id="' + e.id + '">' +
+      '<span class="tag ' + tagClass(e.status) + '">' + esc(e.status) + "</span>" +
+      '<span class="case-q">' + esc(e.input_prompt) + "</span>" +
+      '<span class="case-meta">' + dur + " · " + (e.tool_call_count || 0) + " 次工具</span>" +
+      "</div>" +
+      '<div class="case-body hidden" id="body-' + e.id + '">' +
+      (chain ? '<div class="chain">' + chain + "</div>" + toolDetails : '<div class="chip">无工具调用</div>') +
+      (chips ? '<div class="chips">' + chips + "</div>" : "") +
+      srcNote +
+      reasons +
+      '<div class="reason"><b>Agent 回复</b>　' + esc(e.response || e.error || "") + "</div>" +
+      "</div></div>";
+  }).join("");
+
+  $("execBox").innerHTML =
+    "<h3 style='font-size:14px;font-weight:500;margin:22px 0 6px'>逐条明细（" + list.length +
+    " 条，点击展开轨迹与裁判理由）</h3>" + cards;
+
+  document.querySelectorAll(".case-head").forEach((el) => {
+    el.addEventListener("click", () => {
+      const b = $("body-" + el.dataset.id);
+      if (b) b.classList.toggle("hidden");
+    });
+  });
+}
+
+function renderMetrics(m) {
+  $("metricsBox").innerHTML = (m && Object.keys(m).length)
+    ? "<h3 style='font-size:14px;font-weight:500;margin:22px 0 6px'>聚合指标</h3><pre>" +
+      esc(JSON.stringify(m, null, 2)) + "</pre>" : "";
+}
+
+async function tick() {
+  const res = await fetch("/web/result/" + currentId);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+
+  $("resultCard").classList.remove("hidden");
+  $("overall").textContent = num(data.scores.overall);
+  $("status").textContent = data.status;
+  $("status").className = "tag " + tagClass(data.status);
+  const p = data.progress || {};
+  $("progress").textContent = "已完成 " + (p.done || 0) + " / " + (p.total || 0) +
+    "　成功 " + (p.successful || 0) + "　失败 " + (p.failed || 0);
+  $("totals").innerHTML = "Token " + (data.totals.tokens || 0) +
+    "　成本 $" + Number(data.totals.cost || 0).toFixed(6);
+
+  renderScores(data.scores, window.__delta);
+  renderMetrics(data.metrics);
+  renderExecutions(data.executions);
+
+  $("cancelBtn").classList.toggle("hidden", !data.running);
+
+  if (!data.running) {
+    clearInterval(window.__timer);
+    $("startBtn").disabled = false;
+    $("startBtn").textContent = "再跑一次";
+    loadBaselines();
+  }
+}
+
+function poll(id) {
+  currentId = id;
+  window.__delta = null;
+  const run = async () => { try { await tick(); } catch (e) {
+    clearInterval(window.__timer);
+    $("startBtn").disabled = false;
+    $("probeMsg").innerHTML = '<div class="msg bad">轮询失败：' + esc(e) + '</div>';
+  }};
+  run();
+  window.__timer = setInterval(run, 3000);
+}
+
+async function doCompare() {
+  const b = $("baseline").value;
+  if (!b || !currentId) { $("cmpResult").innerHTML = ""; window.__delta = null; return; }
+  try {
+    const d = await (await fetch("/web/compare?current=" + currentId + "&baseline=" + b)).json();
+    window.__delta = d.delta;
+    const rows = ["overall", "quality", "performance", "security", "task_completion"].map((k) => {
+      const cur = d.current.scores[k], base = d.baseline.scores[k], dv = d.delta[k];
+      const noise = dv != null && Math.abs(dv) <= NOISE_BAND;
+      const cls = (dv == null || noise) ? "" : (dv > 0 ? "up" : "down");
+      const cell = dv == null ? "--"
+        : (dv > 0 ? "+" : "") + dv.toFixed(1) + (noise ? " ±噪声" : "");
+      return "<tr><td>" + k + "</td><td>" + num(cur) + "</td><td>" + num(base) +
+        '</td><td class="' + cls + '">' + cell + "</td></tr>";
+    }).join("");
+    $("cmpResult").innerHTML =
+      "<table class='tbl'><thead><tr><th>维度</th><th>当前 #" +
+      currentId + "</th><th>基线 #" + b + "</th><th>变化</th></tr></thead><tbody>" + rows +
+      "</tbody></table>" +
+      '<p class="hint">±' + NOISE_BAND +
+      ' 分以内记为噪声：LLM 裁判存在随机波动，这个幅度不足以判定真实改善或退化。' +
+      "要更稳的结论，可对同一批用例重复评估后取平均。</p>";
+    renderScores(d.current.scores, d.delta);
+  } catch (e) {
+    $("cmpResult").innerHTML = '<div class="msg bad">对比失败：' + esc(e) + '</div>';
+  }
+}
+
+async function start() {
+  const base = $("baseUrl").value.trim();
+  if (!base) { $("probeMsg").innerHTML = '<div class="msg warn">请填写 Agent 服务地址。</div>'; return; }
+  $("startBtn").disabled = true;
+  $("startBtn").textContent = "评估中...";
+  $("probeMsg").innerHTML = '<div class="msg">正在发起评估...</div>';
+
+  const body = {
+    base_url: base,
+    dataset_id: Number($("dataset").value),
+    case_limit: Number($("limit").value) || 10,
+    run_all: $("runAll").checked,
+  };
+  const cp = $("chatPath").value.trim();
+  if (cp) body.chat_path = cp;
+  [["requestField", "request_field"], ["replyField", "reply_field"], ["toolField", "tool_calls_field"]]
+    .forEach(([el, key]) => { const v = $(el).value.trim(); if (v) body[key] = v; });
+
+  try {
+    const res = await fetch("/web/evaluate", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : "HTTP " + res.status);
+    const warn = data.probe && data.probe.warning ? '<div class="msg warn">' + esc(data.probe.warning) + '</div>' : "";
+    $("probeMsg").innerHTML = '<div class="msg ok">已创建评估任务 #' + data.evaluation_id +
+      "，正在跑 " + ($("runAll").checked ? "全部" : body.case_limit) + " 条用例。</div>" + warn;
+    $("cmpResult").innerHTML = "";
+    poll(data.evaluation_id);
+  } catch (e) {
+    $("startBtn").disabled = false;
+    $("startBtn").textContent = "开始评估";
+    $("probeMsg").innerHTML = '<div class="msg bad">发起失败：' + esc(e) + '</div>';
+  }
+}
+
+async function cancelTask() {
+  if (!currentId) return;
+  await fetch("/web/cancel/" + currentId, {method: "POST"});
+  $("probeMsg").innerHTML = '<div class="msg">已把任务 #' + currentId + ' 标记为 cancelled。</div>';
+  clearInterval(window.__timer);
+  $("startBtn").disabled = false;
+  $("startBtn").textContent = "再跑一次";
+  tick();
+}
+
+$("probeBtn").addEventListener("click", probe);
+$("startBtn").addEventListener("click", start);
+$("baseUrl").addEventListener("change", probe);
+$("cmpBtn").addEventListener("click", doCompare);
+$("cancelBtn").addEventListener("click", cancelTask);
+$("reportBtn").addEventListener("click", () => {
+  if (currentId) window.open("/web/report/" + currentId, "_blank");
+});
+loadDatasets();
+loadBaselines();
+</script>
+</body>
+</html>
