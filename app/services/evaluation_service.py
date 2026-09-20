@@ -1,11 +1,7 @@
 """评估任务编排服务。
 
-修复记录：
-1. 原先直接把请求级 Session 连同 LLM 客户端跨线程传给 BackgroundTasks（Session 非线程安全），
-   现在由后台任务自己创建独立 Session，见 ``app.tasks.evaluation_task``；
-2. ``os.getenv("OPENAI_API_KEY")`` 与实际 .env 中的 ``LLM_API_KEY`` 不匹配，改为统一配置；
-3. 缺少 failed / partial 状态分支，全部用例失败时仍被标记 completed；
-4. ``total_cost`` / ``total_tokens`` 两列从未写入。
+后台任务自带独立 Session（见 ``app.tasks.evaluation_task``）——
+请求级的 Session 不是线程安全的，不能跨线程复用。
 """
 
 import logging

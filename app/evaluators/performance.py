@@ -1,9 +1,8 @@
 """性能评估器：延迟、成本与 Token 效率。
 
-原先这里自带一份已过时的 PRICING 表（键名与 cost_calculator 也不一致），
-现在统一复用 CostCalculator，避免两处价格漂移。
-另外原先用 ``agent_name``（其实是被测 Agent 的显示名）去查模型价格，
-必然命中不到，改为从 ``execution.execution_metadata.model_name`` 取值。
+价格统一取自 CostCalculator；模型名优先取执行记录里的
+``execution_metadata.model_name``，取不到才回退到配置值——
+被测 Agent 的显示名不能当模型名用，拿它查价格必然查不到。
 """
 
 import logging
@@ -24,11 +23,7 @@ class PerformanceEvaluator(BaseEvaluator):
     def __init__(self, config: Dict[str, Any] = None):
         super().__init__(config)
         self.cost_calculator = CostCalculator(config.get("pricing") if config else None)
-        self.default_model = (
-            (config or {}).get("model")
-            or (config or {}).get("llm_model")
-            or get_settings().LLM_MODEL
-        )
+        self.default_model = (config or {}).get("model") or get_settings().LLM_MODEL
 
     @staticmethod
     def _resolve_model(execution: AgentExecution, fallback: str) -> str:

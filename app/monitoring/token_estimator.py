@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 _ENCODING: Any = None
 _ENCODING_LOADED = False
 
-# tiktoken 不可用时的粗估系数（中文一个字约一个 token，英文约 4 个字符一个）
+# 粗估系数：先按「中文 1 字 ≈ 1 token、ASCII 4 字符 ≈ 1 token」估出基数，
+# 再乘这个系数。系数 < 1 是刻意压低——估算宁可偏保守，也不要把成本报高。
 _FALLBACK_RATIO = 0.6
 
 

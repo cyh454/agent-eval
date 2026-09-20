@@ -1,8 +1,7 @@
 """后台评估任务。
 
-关键修复：原先 FastAPI 的 BackgroundTasks 复用了请求作用域的 SQLAlchemy Session。
-Session 不是线程安全的，而且请求返回后连接池可能关闭资源，导致后台评估随机报错。
-这里为每次后台任务单独创建 Session，用完即关。
+每次任务自带独立 Session：请求作用域的 Session 不是线程安全的，
+且请求返回后连接可能已被回收。
 """
 
 import logging

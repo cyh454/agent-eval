@@ -1,9 +1,10 @@
 """LLM 工厂与 LLM 输出解析工具。
 
-集中这里是为了解决原代码的几个问题：
-1. 各评估器取模型名的 key 不统一（``model`` / ``llm_model``），配置项其实从未生效；
-2. 没有传 ``base_url``，导致 OpenAI 兼容端点（如智谱 open.bigmodel.cn）无法使用；
-3. LLM 返回被 ```` ```json ```` 代码块包裹时 json.loads 直接失败。
+统一入口带来三个约定：
+
+1. 模型名只认 ``model`` 一个 key（``llm_model`` 是已废弃的别名，不再兼容）；
+2. ``base_url`` 一定传下去，否则 OpenAI 兼容端点（如智谱 open.bigmodel.cn）用不了；
+3. LLM 返回被 json 代码块包裹时也能解析出来。
 """
 
 import json
@@ -43,12 +44,7 @@ def build_chat_model(
     if injected is not None:
         return injected
 
-    model = (
-        overrides.get("model")
-        or config.get("model")
-        or config.get("llm_model")
-        or settings.LLM_MODEL
-    )
+    model = overrides.get("model") or config.get("model") or settings.LLM_MODEL
     api_key = overrides.get("api_key") or config.get("api_key") or settings.llm_api_key
     base_url = (
         overrides.get("base_url") or config.get("base_url") or settings.LLM_BASE_URL

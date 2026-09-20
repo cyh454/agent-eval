@@ -1,4 +1,4 @@
-"""集中式配置 (.env -> Settings)，替代原先散落的 os.getenv 读取方式。"""
+"""集中式配置：所有环境变量统一在这里声明，业务代码不再直接读 os.getenv。"""
 
 from functools import lru_cache
 from typing import Optional

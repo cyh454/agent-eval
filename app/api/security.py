@@ -1,7 +1,6 @@
 """安全规则管理与安全日志查询接口。
 
-这里的规则会被 EvaluationService 注入到 SecurityDetector，
-让原先定义后从未被使用的 security_rules 表真正参与评估。
+这里的规则会被 EvaluationService 注入 SecurityDetector，参与安全维度打分。
 """
 
 from typing import List, Optional

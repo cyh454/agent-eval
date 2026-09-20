@@ -1,12 +1,13 @@
-"""成本计算器 —— 全局唯一的模型价格来源。
+"""成本计算器 —— 全局唯一的模型价格来源（性能维度、成本统计都从这里取价）。
 
-原先的问题：``performance.py`` 自带一份 ``PRICING``（键为 prompt/completion），
-``cost_calculator.py`` 另有一份（键为 input/output），两份价格互不一致且都已经过时。
-这里统一为一份表，键名统一为 ``prompt`` / ``completion``。
+价格只在这张表里维护一份，键名固定为 ``prompt`` / ``completion``，
+单位「美元 / 1K tokens」。调用方若传入历史键名 input/output，会被归一化后合并。
 """
 
 from functools import lru_cache
 from typing import Any, Dict, Mapping, Optional
+
+from app.monitoring.token_estimator import count_tokens
 
 # 统一使用「美元 / 1K tokens」为单位。
 # OpenAI 价格参考 openai.com/pricing；智谱价格为官方人民币价按汇率折算，仅供估算。
@@ -36,9 +37,8 @@ PRICING: Dict[str, Dict[str, float]] = {
     "embedding-2": {"prompt": 0.000070, "completion": 0.0},
 }
 
-# 成本计算的兜底模型：agent_config 未指定 model 时，按它的单价计价。
-# 必须与 Settings.LLM_MODEL 的默认值保持一致——用一个你根本没在跑的模型计价，
-# 算出来的成本就是错的（比如 glm-4-plus 比 glm-4.5-air 贵 2.5~6 倍）。
+# agent_config 未指定 model 时的兜底计价模型。
+# 必须与 Settings.LLM_MODEL 的默认值一致——用没在跑的模型计价，成本就是错的。
 DEFAULT_MODEL = "glm-4.5-air"
 _DEFAULT_PRICING = PRICING[DEFAULT_MODEL]
 
@@ -80,7 +80,11 @@ class CostCalculator:
         return (max(tokens, 0) / 1000) * pricing["prompt"]
 
     def estimate_tokens(self, text: str, model: str = DEFAULT_MODEL) -> int:
-        """估算 Token 数：优先 tiktoken，失败时回退到按字符比例的粗估。"""
+        """估算 Token 数：优先 tiktoken，否则回退到按字符比例的粗估。
+
+        粗估复用 ``token_estimator.count_tokens`` 的口径，
+        避免同一个「估算」在两处算出不同结果。
+        """
         if not text:
             return 0
 
@@ -91,9 +95,7 @@ class CostCalculator:
             except Exception:  # noqa: BLE001 - 编码异常时回退到估算
                 pass
 
-        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
-        other_chars = len(text) - chinese_chars
-        return int(chinese_chars / 2 + other_chars / 4)
+        return count_tokens(text)
 
     @staticmethod
     @lru_cache(maxsize=8)

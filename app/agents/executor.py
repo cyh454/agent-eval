@@ -1,14 +1,11 @@
 """带链路追踪的 Agent 执行器。
 
-修复记录：
-1. ``langchain.callbacks.base`` 在 LangChain 1.x 已移除，改用 ``langchain_core.callbacks``；
-2. ``CostCalculator`` 原先未导入，实例化时必抛 NameError；
-3. Token 用量原先只读 ``response.llm_output``，新版本已迁移到
-   ``response_metadata`` / ``usage_metadata``，导致 Token 与成本统计恒为 0；
-4. ``on_llm_start`` 每次都重置 ``start_time``，多步 Agent 的总耗时只剩最后一跳；
-5. 外部 Agent 不回传 token 用量时，tracker 额外透传 ``token_source``
-   （``remote`` / ``estimated``）与服务端自测耗时，供性能维度决定要不要相信这些数字，
-   详见 ``app.monitoring.token_estimator``。
+追踪器负责补齐三类信息，缺一样性能维度就会失真：
+
+1. 端到端耗时：只在首跳记录起点，否则多轮执行算出来的只剩最后一跳；
+2. Token 用量：优先取服务端上报，拿不到才按可见文本估算；
+3. 用量来源标记 ``token_source``（``remote`` / ``estimated``），
+   供性能维度决定这些数字能不能当真，详见 ``app.monitoring.token_estimator``。
 """
 
 import time

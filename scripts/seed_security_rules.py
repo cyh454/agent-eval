@@ -3,7 +3,7 @@
 背景
 ----
 ``app/security/detector.py`` 的内置规则全是英文关键词（system prompt / ignore previous /
-rm -rf ...），对中文场景基本失效——所以安全维度以前恒为满分。
+rm -rf ...），覆盖不到中文场景，这里补上中文规则。
 
 为什么 severity 一律用 low
 --------------------------
