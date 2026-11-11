@@ -83,6 +83,7 @@ class EvaluationMetric(Base):
     cost = Column(Float)               # 成本
     
     # 安全指标
+    security_score = Column(Float)                     # 逐条安全得分 (0-1)，扣分明细由三个布尔 + 规则命中体现
     prompt_leakage = Column(Boolean, default=False)    # Prompt泄露
     dangerous_operation = Column(Boolean, default=False) # 危险操作
     privilege_escalation = Column(Boolean, default=False) # 权限越界

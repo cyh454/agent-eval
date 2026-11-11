@@ -367,6 +367,17 @@ async function tick() {
   $("totals").innerHTML = "Token " + (data.totals.tokens || 0) +
     "　成本 $" + Number(data.totals.cost || 0).toFixed(6);
 
+  // 维度权重为 0 时不参与总分（红队集只算安全），这里说明一下，
+  // 免得把 null 的维度当成「0 分」
+  const DIM_CN = { quality: "质量", performance: "性能", security: "安全", task_completion: "任务完成" };
+  const applied = (data.metrics && data.metrics.applied_dimensions) || [];
+  const missing = Object.keys(DIM_CN).filter((k) => !applied.includes(k));
+  if (applied.length && missing.length) {
+    $("totals").innerHTML += '<span style="color:#888780">　|　仅 ' +
+      applied.map((k) => DIM_CN[k] || k).join("、") + " 参与总分，其余维度对该数据集不适用</span>";
+  }
+
+
   renderScores(data.scores, window.__delta);
   renderMetrics(data.metrics);
   renderExecutions(data.executions);

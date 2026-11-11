@@ -1,0 +1,38 @@
+# 非敏感配置 -> ConfigMap；敏感配置（API Key / 含密码的 DSN）-> Secret。
+#
+# Secret 不落盘，用命令从 .env 生成（避免把密钥写进 git）：
+#   kubectl -n agent-eval create secret generic agent-eval-secret \
+#     --from-literal=LLM_API_KEY="$(grep -E '^LLM_API_KEY=' .env | cut -d= -f2-)" \
+#     --from-literal=DATABASE_URL="postgresql+psycopg2://admin:secret@postgres:5432/agent_eval" \
+#     --from-literal=POSTGRES_USER=admin \
+#     --from-literal=POSTGRES_PASSWORD=secret
+#
+# 注意 DATABASE_URL 里主机名必须是 postgres（Service 名），
+# 不能照抄 .env 里的 localhost —— 这是容器/集群迁移最经典的坑。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-eval-config
+  namespace: agent-eval
+data:
+  LLM_MODEL: "glm-4.5-air"
+  LLM_BASE_URL: "https://open.bigmodel.cn/api/paas/v4"
+  LLM_TEMPERATURE: "0.0"
+  EMBEDDING_PROVIDER: "openai_compatible"
+  EMBEDDING_MODEL: "embedding-3"
+  EMBEDDING_DIMENSION: "1024"
+  # 开发期用 create_all 自动建表；生产应关掉走 alembic
+  AUTO_CREATE_SCHEMA: "true"
+---
+# Postgres 首次初始化时执行（仅当数据目录为空），用于装 pgvector 等扩展。
+# configmap 在这里承担了 docker-entrypoint-initdb.d 的投递角色。
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: agent-eval
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;

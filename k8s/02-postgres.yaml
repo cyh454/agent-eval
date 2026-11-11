@@ -1,0 +1,100 @@
+# 有状态服务用 StatefulSet，不是 Deployment：
+#   1. 提供稳定的网络标识（postgres-0.postgres）
+#   2. 配 volumeClaimTemplates，每个副本一块独立 PVC，Pod 重建后数据还在
+# 副本数固定为 1：Postgres 主库单实例写，扩副本需要主从/流复制，不是改 replicas 能解决的。
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: agent-eval
+  labels:
+    app: postgres
+spec:
+  # headless Service：不给 ClusterIP，DNS 直接解析到 Pod IP，
+  # 这是 StatefulSet 稳定网络标识的前提
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: agent-eval
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          # 走内部 registry：集群不依赖外网，镜像来源可复现
+          image: localhost:5000/pgvector-pg18:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-eval-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-eval-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: agent_eval
+            # 不设 PGDATA：pg18 镜像自己把数据放在 /var/lib/postgresql/<ver>/docker，
+            # 手动改成旧路径 /var/lib/postgresql/data 会被判定为旧布局而拒绝启动
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+          # 用 pg_isready 做探针，而不是看进程是否存在：
+          # 进程活着不代表能接受连接（初始化期间就是这种情况）
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d agent_eval"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d agent_eval"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: init-sql
+          configMap:
+            name: postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

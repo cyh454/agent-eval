@@ -1,0 +1,109 @@
+# 无状态服务用 Deployment。副本数故意保持 1，原因不是懒：
+# 评测任务是 BackgroundTasks 在进程内跑的（app/tasks/evaluation_task.py），
+# 多副本会带来两个真问题——HPA 扩容后新 Pod 接不到旧任务；
+# /web/cancel 只能改自己进程里那条记录，改不到别的副本。
+# 要扩副本，得先把执行外置成 Job 或队列驱动的 worker。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-eval-web
+  namespace: agent-eval
+  labels:
+    app: agent-eval-web
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agent-eval-web
+  template:
+    metadata:
+      labels:
+        app: agent-eval-web
+    spec:
+      # 依赖启动顺序：compose 里靠 depends_on + healthcheck，K8s 没有 depends_on，
+      # 标准做法是 initContainer 阻塞到依赖真的可连接再启动主容器。
+      # 为什么必须做：应用启动时会建表，数据库/DNS 没就绪那一次失败不会自动重试
+      # （lifespan 只是容错继续启动），结果就是"服务起来了但表没建"。
+      # 复用 registry 里已有的 postgres 镜像，不为一个探活多拉一个 busybox。
+      initContainers:
+        - name: wait-for-postgres
+          image: localhost:5000/pgvector-pg18:v1
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h postgres -p 5432 -U "$POSTGRES_USER" -d agent_eval; do
+                echo "等待 postgres 就绪..."
+                sleep 2
+              done
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: agent-eval-secret
+                  key: POSTGRES_USER
+      containers:
+        - name: web
+          image: localhost:5000/agent-eval-web:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          # ConfigMap 注入非敏感配置，Secret 注入 key 与含密码的 DSN。
+          # 优先级：显式 env > envFrom，所以下面不再重复声明同名变量。
+          envFrom:
+            - configMapRef:
+                name: agent-eval-config
+            - secretRef:
+                name: agent-eval-secret
+          # 就绪探针决定"能不能接流量"，失败只是从 Service 摘掉，不重启 Pod
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          # 存活探针决定"要不要重启"，所以启动宽限期给足，避免建表期间被误杀
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # requests 决定调度与 QoS，limits 决定被不被 OOMKilled。
+          # 评测进程内存峰值比稳态高，limit 留了 4 倍余量
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-eval-web
+  namespace: agent-eval
+  labels:
+    app: agent-eval-web
+spec:
+  # NodePort：本地集群里最省事的对外方式。
+  # 生产换 Ingress + ClusterIP，理由是需要统一入口/证书/按域名路由。
+  type: NodePort
+  selector:
+    app: agent-eval-web
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30010

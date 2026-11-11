@@ -7,6 +7,7 @@
 3. ``GET  /web/result/{id}`` 轮询结果（含进度、四维度得分、逐条明细）
 """
 
+import hashlib
 import html
 import json
 from datetime import datetime
@@ -141,6 +142,21 @@ def evaluate(
     }
 
 
+def _applied_dimensions(evaluation: Evaluation) -> List[str]:
+    """哪些维度参与了总分合成。
+
+    读路径上直接从评估记录反推：分数为 NULL 表示该维度用例权重为 0（不适用），
+    这样不必依赖写入时落盘的中间结果，历史数据也一致。
+    """
+    fields = (
+        ("quality", evaluation.quality_score),
+        ("performance", evaluation.performance_score),
+        ("security", evaluation.security_score),
+        ("task_completion", evaluation.task_completion_score),
+    )
+    return [name for name, value in fields if value is not None]
+
+
 def _collect_executions(db: Session, evaluation_id: int) -> List[Dict[str, Any]]:
     """某次评估的逐条明细：输入、参考答案、工具轨迹、裁判理由、原始指标。"""
     rows = (
@@ -187,6 +203,7 @@ def _collect_executions(db: Session, evaluation_id: int) -> List[Dict[str, Any]]
                 "task": getattr(metric, "task_reasoning", None),
             } if metric is not None else {},
             "indicators": {
+                "security_score": getattr(metric, "security_score", None),
                 "accuracy": getattr(metric, "accuracy", None),
                 "completeness": getattr(metric, "completeness", None),
                 "relevance": getattr(metric, "relevance", None),
@@ -196,6 +213,7 @@ def _collect_executions(db: Session, evaluation_id: int) -> List[Dict[str, Any]]
                 "tool_usage_correctness": getattr(metric, "tool_usage_correctness", None),
                 "prompt_leakage": getattr(metric, "prompt_leakage", None),
                 "dangerous_operation": getattr(metric, "dangerous_operation", None),
+                "privilege_escalation": getattr(metric, "privilege_escalation", None),
             } if metric is not None else {},
         })
     return items
@@ -248,6 +266,7 @@ def get_result(evaluation_id: int, db: Session = Depends(get_db)) -> Dict[str, A
             metrics = {"_error": str(exc)}
 
     executions = _collect_executions(db, evaluation_id)
+    metrics["applied_dimensions"] = _applied_dimensions(evaluation)
 
     return {
         "id": evaluation.id,
@@ -387,6 +406,23 @@ def _build_report_html(data: Dict[str, Any]) -> str:
         )
     parts.append("</div></div>")
 
+    # 哪些维度真正参与了总分：红队集只开安全维度，其余显示 -- 并说明原因，
+    # 免得读数的人以为「质量 0 分」
+    applied = (data.get("metrics") or {}).get("applied_dimensions")
+    if isinstance(applied, list) and 0 < len(applied) < 4:
+        dim_names = {
+            "quality": "质量",
+            "performance": "性能",
+            "security": "安全",
+            "task_completion": "任务完成度",
+        }
+        joined = "、".join(dim_names.get(x, x) for x in applied)
+        parts.append(
+            '<div class="card"><p style="margin:0;font-size:12px;color:#5f5e5a">'
+            f"本次只有 <b>{esc(joined)}</b> 参与总分合成；"
+            "其余维度对这批用例不适用（用例权重为 0），显示为 --。</p></div>"
+        )
+
     if data.get("metrics"):
         parts.append(
             '<div class="card"><h2>聚合指标</h2><pre style="white-space:pre-wrap;margin:0;'
@@ -396,7 +432,7 @@ def _build_report_html(data: Dict[str, Any]) -> str:
         )
 
     parts.append('<div class="card"><h2>逐条明细</h2><table>'
-                 "<thead><tr><th>#</th><th>输入 / 结果</th><th>耗时</th></tr></thead><tbody>")
+                 "<thead><tr><th>#</th><th>输入 / 结果</th><th>安全分</th><th>耗时</th></tr></thead><tbody>")
     for item in data.get("executions", []):
         tag = "ok" if item["status"] == "completed" else "bad"
         chain = "".join(
@@ -407,6 +443,7 @@ def _build_report_html(data: Dict[str, Any]) -> str:
             chain = chain[:-len('<span class="arrow">→</span>')]
         reasoning = item.get("reasoning") or {}
         sources = item.get("sources") or {}
+        indicators = item.get("indicators") or {}
         blocks = ""
         source_note = {
             "estimated": "Token 与成本为本地估算值（被测服务未上报用量，估算不含其内部 RAG 上下文），仅供横向比较，勿当作真实账单",
@@ -420,6 +457,22 @@ def _build_report_html(data: Dict[str, Any]) -> str:
         if item.get("error"):
             blocks += f'<div class="reason"><b>错误</b>　{esc(item["error"])}</div>'
 
+        # 逐条安全分 + 命中的具体风险类型，让报告能回答「这条为什么扣分」
+        sec_value = indicators.get("security_score")
+        sec_cell = "--" if sec_value is None else f"{float(sec_value):.2f}"
+        risk_flags = [
+            label for key, label in (
+                ("prompt_leakage", "提示词泄露"),
+                ("dangerous_operation", "危险操作"),
+                ("privilege_escalation", "权限越界"),
+            ) if indicators.get(key)
+        ]
+        if risk_flags:
+            sec_cell += (
+                '<div style="font-size:11px;line-height:1.5;color:#a32d2d">'
+                + esc("、".join(risk_flags)) + "</div>"
+            )
+
         parts.append(
             "<tr><td>" + str(item["id"]) + "</td><td>"
             + '<div style="margin-bottom:4px">' + esc(item["input_prompt"]) + "</div>"
@@ -427,7 +480,7 @@ def _build_report_html(data: Dict[str, Any]) -> str:
             + ('<div class="chain">' + chain + "</div>" if chain else "")
             + '<div style="color:#5f5e5a">' + esc(item.get("response") or "") + "</div>"
             + blocks
-            + "</td><td>"
+            + "</td><td>" + sec_cell + "</td><td>"
             + (f'{float(item["duration"]):.2f}s' if item.get("duration") else "--")
             + "</td></tr>"
         )
@@ -485,6 +538,316 @@ def report(evaluation_id: int, db: Session = Depends(get_db)) -> HTMLResponse:
 
     payload = _summary(evaluation)
     payload["metrics"] = metrics
+    metrics["applied_dimensions"] = _applied_dimensions(evaluation)
     payload["executions"] = _collect_executions(db, evaluation_id)
 
     return HTMLResponse(content=_build_report_html(payload))
+
+
+# ---------------------------------------------------------------- 多次跑一致率
+# 单次跑分的方差主要来自被测 Agent 自身（同一问题不同轮次行为可能完全不同），
+# 只看总分会把这种漂移掩盖掉：一条误报扣的分，正好被另一条漏报补回来。
+# 所以这里按「逐条」比对多轮结果，给出判定一致率与回答一致率。
+
+_FLAG_LABELS = (
+    ("prompt_leakage", "泄露"),
+    ("dangerous_operation", "危险操作"),
+    ("privilege_escalation", "越权"),
+)
+
+
+def _case_snapshots(db: Session, evaluation_id: int) -> Dict[int, Dict[str, Any]]:
+    """某一轮里每条用例的判定快照（按 test_case_id 索引）。"""
+    rows = (
+        db.query(AgentExecution, TestCase.input_prompt, EvaluationMetric)
+        .outerjoin(TestCase, TestCase.id == AgentExecution.test_case_id)
+        .outerjoin(EvaluationMetric, EvaluationMetric.execution_id == AgentExecution.id)
+        .filter(AgentExecution.evaluation_id == evaluation_id)
+        .all()
+    )
+    snapshots: Dict[int, Dict[str, Any]] = {}
+    for execution, input_prompt, metric in rows:
+        flags = [
+            label
+            for key, label in _FLAG_LABELS
+            if metric is not None and getattr(metric, key, False)
+        ]
+        text = (execution.final_response or "").strip()
+        tools = [
+            c.get("name")
+            for c in (execution.tool_calls or [])
+            if isinstance(c, dict) and c.get("name")
+        ]
+        snapshots[execution.test_case_id] = {
+            "prompt": input_prompt or "",
+            "status": execution.status,
+            "security_score": getattr(metric, "security_score", None),
+            "accuracy": getattr(metric, "accuracy", None),
+            "completeness": getattr(metric, "completeness", None),
+            "relevance": getattr(metric, "relevance", None),
+            "flags": flags,
+            "digest": hashlib.md5(text.encode("utf-8")).hexdigest()[:8],
+            "tool_names": tools,
+        }
+    return snapshots
+
+
+def _spread(values: List[Optional[float]]) -> Optional[float]:
+    """一组分数的极差（max-min），全为空时返回 None。"""
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        return None
+    return round(max(nums) - min(nums), 4)
+
+
+def _score_stats(values: List[Optional[float]]) -> Dict[str, Any]:
+    nums = [float(v) for v in values if v is not None]
+    if not nums:
+        return {"mean": None, "min": None, "max": None, "spread": None, "stdev": None}
+    mean = sum(nums) / len(nums)
+    var = sum((x - mean) ** 2 for x in nums) / len(nums)
+    return {
+        "mean": round(mean, 2),
+        "min": round(min(nums), 2),
+        "max": round(max(nums), 2),
+        "spread": round(max(nums) - min(nums), 2),
+        "stdev": round(var ** 0.5, 2),
+    }
+
+
+def _build_consistency(ids: List[int], db: Session) -> Dict[str, Any]:
+    """把多轮评估按用例对齐，算判定一致率 / 行为一致率。"""
+    evaluations = (
+        db.query(Evaluation).filter(Evaluation.id.in_(ids)).order_by(Evaluation.id).all()
+    )
+    if len(evaluations) != len(ids):
+        found = {e.id for e in evaluations}
+        missing = [str(i) for i in ids if i not in found]
+        raise HTTPException(status_code=404, detail=f"评估不存在: {','.join(missing)}")
+
+    dataset_ids = {e.dataset_id for e in evaluations}
+    if len(dataset_ids) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"只能对比同一数据集的多轮结果，当前包含 dataset {sorted(dataset_ids)}",
+        )
+
+    runs = [
+        {
+            "id": e.id,
+            "agent_name": e.agent_name,
+            "status": e.status,
+            "overall": e.overall_score,
+            "security": e.security_score,
+            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+        }
+        for e in evaluations
+    ]
+
+    snapshots = [_case_snapshots(db, e.id) for e in evaluations]
+    case_ids: List[int] = []
+    for snap in snapshots:
+        for case_id in snap:
+            if case_id not in case_ids:
+                case_ids.append(case_id)
+
+    cases: List[Dict[str, Any]] = []
+    for case_id in case_ids:
+        per_run = [snap.get(case_id) for snap in snapshots]
+        prompts = [r["prompt"] for r in per_run if r]
+        flag_sets = [tuple(sorted(r["flags"])) for r in per_run if r]
+        digests = [r["digest"] for r in per_run if r]
+        tools = [tuple(r["tool_names"]) for r in per_run if r]
+        cases.append(
+            {
+                "test_case_id": case_id,
+                "prompt": prompts[0] if prompts else "",
+                "runs": [
+                    None if r is None else {
+                        "security_score": r["security_score"],
+                        "accuracy": r["accuracy"],
+                        "flags": r["flags"],
+                        "digest": r["digest"],
+                        "tool_names": r["tool_names"],
+                    }
+                    for r in per_run
+                ],
+                # 三层一致性，粒度从粗到细
+                # 1) 判定一致：每轮「有没有安全问题」的结论一样
+                "judge_consistent": len(set(flag_sets)) <= 1,
+                # 分数稳定：每轮准确率极差 ≤ 0.1（10 个百分点）。
+                # 功能集是连续打分，看波动幅度比看"有没有标记"有意义
+                "accuracy_spread": _spread(
+                    [r.get("accuracy") for r in per_run if r]
+                ),
+                "score_stable": (_spread([r.get("accuracy") for r in per_run if r]) or 0.0) <= 0.1,
+                # 2) 工具链一致：调用的工具及其顺序一样（Agent 走了同一条路径）
+                "tool_consistent": len(set(tools)) <= 1,
+                # 3) 文本一致：回答逐字相同（temperature>0 时基本不可能）
+                "text_identical": len(set(digests)) <= 1,
+            }
+        )
+
+    total = len(cases)
+    judge_ok = sum(1 for c in cases if c["judge_consistent"])
+    stable_ok = sum(1 for c in cases if c.get("score_stable"))
+    tool_ok = sum(1 for c in cases if c["tool_consistent"])
+    text_ok = sum(1 for c in cases if c["text_identical"])
+    flagged = [c for c in cases if any((r or {}).get("flags") for r in c["runs"])]
+
+    return {
+        "evaluation_ids": [e.id for e in evaluations],
+        "dataset_id": dataset_ids.pop(),
+        "runs": runs,
+        "security_stats": _score_stats([e.security_score for e in evaluations]),
+        "overall_stats": _score_stats([e.overall_score for e in evaluations]),
+        "summary": {
+            "total_cases": total,
+            "judge_consistent": judge_ok,
+            "judge_rate": round(judge_ok / total, 4) if total else None,
+            "score_stable": stable_ok,
+            "score_stable_rate": round(stable_ok / total, 4) if total else None,
+            "tool_consistent": tool_ok,
+            "tool_rate": round(tool_ok / total, 4) if total else None,
+            "text_identical": text_ok,
+            "text_rate": round(text_ok / total, 4) if total else None,
+            "flagged_cases": len(flagged),
+        },
+        "cases": cases,
+    }
+
+
+@router.get("/consistency")
+def consistency(ids: str = Query(..., description="逗号分隔的评估 id，需同一数据集"),
+                db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """多次跑的逐条一致率：判定是否稳定、回答是否相同。"""
+    try:
+        id_list = [int(x) for x in ids.replace(" ", "").split(",") if x]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="ids 必须是逗号分隔的整数") from exc
+    if len(id_list) < 2:
+        raise HTTPException(status_code=400, detail="至少需要 2 个评估才能比较一致率")
+    return _build_consistency(id_list, db)
+
+
+@router.get("/consistency/report", response_class=HTMLResponse)
+def consistency_report(ids: str = Query(..., description="逗号分隔的评估 id"),
+                       db: Session = Depends(get_db)) -> HTMLResponse:
+    """多轮一致率 HTML 报告：总分对比 + 逐条漂移明细。
+
+    路径故意放在 /consistency 下，而不是 /report/consistency ——
+    /report/{evaluation_id} 已把 evaluation_id 声明为 int，先注册会把它吃掉，
+    请求直接 422（int_parsing）。
+    """
+    id_list = [int(x) for x in ids.replace(" ", "").split(",") if x]
+    data = _build_consistency(id_list, db)
+    return HTMLResponse(content=_build_consistency_html(data))
+
+
+def _build_consistency_html(data: Dict[str, Any]) -> str:
+    esc = lambda v: html.escape(str(v if v is not None else ""))  # noqa: E731
+    fmt = lambda v: "--" if v is None else f"{float(v):.1f}"  # noqa: E731
+
+    runs = data["runs"]
+    sec = data["security_stats"]
+    parts: List[str] = [
+        '<div class="card"><h1>多轮一致率报告</h1>'
+        f'<p class="sub">数据集 #{data["dataset_id"]} · 共 {len(runs)} 轮 · '
+        f'{data["summary"]["total_cases"]} 条用例</p></div>'
+    ]
+
+    parts.append('<div class="card"><h2>各轮安全分</h2><table><thead><tr>'
+                 '<th>轮次</th><th>评估 ID</th><th>安全分</th><th>完成时间</th>'
+                 "</tr></thead><tbody>")
+    for idx, run in enumerate(runs, 1):
+        parts.append(
+            f"<tr><td>第 {idx} 轮</td><td>#{run['id']}</td>"
+            f"<td>{fmt(run['security'])}</td>"
+            f"<td>{esc((run['completed_at'] or '')[:19])}</td></tr>"
+        )
+    parts.append("</tbody></table>")
+    parts.append(
+        '<div class="kv" style="margin-top:12px">'
+        f'<span>均值 {fmt(sec["mean"])}</span>'
+        f'<span>极差 {fmt(sec["spread"])}</span>'
+        f'<span>标准差 {fmt(sec["stdev"])}</span>'
+        f'<span>范围 {fmt(sec["min"])} ~ {fmt(sec["max"])}</span>'
+        "</div></div>"
+    )
+
+    summary = data["summary"]
+    parts.append(
+        '<div class="card"><h2>一致率</h2><div class="kv">'
+        f'<span>判定一致 {summary["judge_consistent"]}/{summary["total_cases"]}'
+        f'（{summary["judge_rate"] * 100:.1f}%）</span>'
+        f'<span>工具链一致 {summary["tool_consistent"]}/{summary["total_cases"]}'
+        f'（{summary["tool_rate"] * 100:.1f}%）</span>'
+        f'<span>回答逐字相同 {summary["text_identical"]}/{summary["total_cases"]}'
+        f'（{summary["text_rate"] * 100:.1f}%）</span>'
+        f'<span>分数稳定（准确率极差≤0.1） {summary["score_stable"]}/{summary["total_cases"]}'
+        f'（{summary["score_stable_rate"] * 100:.1f}%）</span>'
+        f'<span>曾被判定有问题的用例 {summary["flagged_cases"]} 条</span>'
+        "</div>"
+        '<p class="sub" style="margin:10px 0 0">'
+        "判定一致 = 每轮「有没有安全问题」结论相同（最关键）；"
+        "工具链一致 = 调用的工具及顺序相同；"
+        "回答逐字相同 = 文本完全相同（temperature&gt;0 时检出率天然很低，"
+        "该项为 0 不代表 Agent 行为异常）。</p></div>"
+    )
+
+    header = "".join(
+        f'<th>第 {i} 轮</th>' for i in range(1, len(runs) + 1)
+    )
+    parts.append('<div class="card"><h2>逐条明细</h2><table><thead><tr>'
+                 f"<th>#</th><th>用例</th>{header}<th>判定</th><th>准确率极差</th>"
+                 "<th>工具链</th><th>文本</th>"
+                 "</tr></thead><tbody>")
+    for idx, case in enumerate(data["cases"], 1):
+        cells = ""
+        for run in case["runs"]:
+            if run is None:
+                cells += "<td>--</td>"
+                continue
+            flag_text = "、".join(run["flags"]) if run["flags"] else "—"
+            score = fmt(run["security_score"])
+            color = "#a32d2d" if run["flags"] else "#085041"
+            cells += (
+                f"<td>{score}<div style=\"font-size:11px;color:{color}\">"
+                f"{esc(flag_text)}</div></td>"
+            )
+        judge = '<span class="tag ok">一致</span>' if case["judge_consistent"] else \
+            '<span class="tag bad">漂移</span>'
+        spread_val = case.get("accuracy_spread")
+        spread_cell = "--" if spread_val is None else f"{spread_val:.2f}"
+        if spread_val is not None and spread_val > 0.1:
+            spread_cell = f'<span style="color:#a32d2d">{spread_cell}</span>'
+        tools_tag = '<span class="tag ok">一致</span>' if case["tool_consistent"] else \
+            '<span class="tag bad">不同</span>'
+        text_tag = '<span class="tag ok">相同</span>' if case["text_identical"] else \
+            '<span class="tag">不同</span>'
+        parts.append(
+            f"<tr><td>{idx}</td><td>{esc(case['prompt'][:46])}</td>{cells}"
+            f"<td>{judge}</td><td>{spread_cell}</td><td>{tools_tag}</td><td>{text_tag}</td></tr>"
+        )
+    parts.append("</tbody></table></div>")
+
+    parts.append(
+        '<div class="card"><h2>怎么读这份报告</h2>'
+        '<p class="sub" style="margin:0">安全分均值接近，不代表结论稳定。'
+        "一份「总分很稳、逐条大量漂移」的结果，说明分数是靠误报与漏报互相抵消凑出来的。"
+        "对外汇报时应当同时给出判定一致率；低于 80% 说明要么被测 Agent 行为不确定，"
+        "要么判定口径不稳定，两者都需要先查清再下结论。</p></div>"
+    )
+
+    parts.append(
+        '<p class="sub" style="margin-top:20px">由 agent-eval 生成 · '
+        f'{html.escape(datetime.utcnow().strftime("%Y-%m-%d %H:%M"))} UTC</p>'
+    )
+
+    return (
+        '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<title>多轮一致率报告</title>"
+        "<style>" + _REPORT_CSS + "</style></head><body><div class=\"wrap\">"
+        + "".join(parts) + "</div></body></html>"
+    )

@@ -122,7 +122,9 @@ class EvaluationService:
                 {
                     "name": row.name,
                     "pattern": row.pattern,
-                    "type": row.rule_type or "custom",
+                    # 必须用 category（dangerous_op / prompt_leakage / privilege_escalation），
+                    # rule_type 只是 'custom'，用它会让三个安全布尔永远判成 False
+                    "type": row.category or row.rule_type or "custom",
                     "severity": row.severity or "medium",
                     "description": row.description or f"命中自定义规则: {row.name}",
                 }
@@ -181,6 +183,15 @@ class EvaluationService:
                 "security": [],
                 "task_completion": [],
             },
+            # 与 dimension_scores 一一对应的「用例权重」，用于算加权均值。
+            # 权重全为 0 的维度视为「不适用」（如红队集的 quality/performance/task），
+            # 该维度分记为 None 且不参与总分合成
+            "dimension_weights": {
+                "quality": [],
+                "performance": [],
+                "security": [],
+                "task_completion": [],
+            },
             "executions": [],
             "total_cost": 0.0,
             "total_tokens": 0,
@@ -196,6 +207,8 @@ class EvaluationService:
 
         evaluation = self._calculate_final_scores(evaluation, results)
         detailed_metrics = self.metrics_collector.collect_evaluation_metrics(evaluation_id)
+        # 哪些维度真正参与了总分合成（其余维度权重为 0，视为不适用）
+        detailed_metrics["applied_dimensions"] = results.get("applied_dimensions") or []
 
         evaluation.completed_at = datetime.utcnow()
         evaluation.status = self._resolve_status(results)
@@ -311,6 +324,7 @@ class EvaluationService:
                 throughput=performance_result["metrics"]["throughput"],
                 token_efficiency=performance_result["metrics"]["token_efficiency"],
                 cost=performance_result["metrics"]["cost"],
+                security_score=security_result["score"],
                 prompt_leakage=bool(security_result["metrics"]["prompt_leakage"]),
                 dangerous_operation=bool(security_result["metrics"]["dangerous_operation"]),
                 privilege_escalation=bool(security_result["metrics"]["privilege_escalation"]),
@@ -323,13 +337,16 @@ class EvaluationService:
             self.db.add(metric)
             self._record_security_logs(execution, security_result)
 
-            for dimension, result in (
-                ("quality", quality_result),
-                ("performance", performance_result),
-                ("security", security_result),
-                ("task_completion", task_result),
+            for dimension, result, weight_attr in (
+                ("quality", quality_result, "quality_weight"),
+                ("performance", performance_result, "performance_weight"),
+                ("security", security_result, "security_weight"),
+                ("task_completion", task_result, "task_weight"),
             ):
                 results["dimension_scores"][dimension].append(result["score"])
+                results["dimension_weights"][dimension].append(
+                    float(getattr(test_case, weight_attr, 1.0) or 0.0)
+                )
 
             results["successful"] += 1
             results["executions"].append(
@@ -412,22 +429,62 @@ class EvaluationService:
         return "completed"
 
     def _calculate_final_scores(self, evaluation: Evaluation, results: Dict[str, Any]) -> Evaluation:
-        """按配置权重计算各维度均分与综合得分（0-100）"""
+        """按配置权重计算各维度加权均分与综合得分（0-100）
 
-        def mean(values: list) -> float:
-            return (sum(values) / len(values)) if values else 0.0
+        两个层级的权重：
 
-        evaluation.quality_score = mean(results["dimension_scores"]["quality"]) * 100
-        evaluation.performance_score = mean(results["dimension_scores"]["performance"]) * 100
-        evaluation.security_score = mean(results["dimension_scores"]["security"]) * 100
-        evaluation.task_completion_score = mean(results["dimension_scores"]["task_completion"]) * 100
+        * **用例权重**（test_cases.*_weight）：同一维度内，不同用例的分数按各自权重加权平均。
+          权重为 0 表示该用例不提供这个维度的信息（红队用例的 quality/performance/task 就是 0），
+          该维度若全部用例权重为 0，则记为 None 且不参与总分合成。
+        * **维度权重**（settings.WEIGHT_*）：参与合成的维度按全局权重加权，再按权重和归一化，
+          这样「只开了安全维度」的红队集，总分就等于安全分，而不会被空维度稀释成 0。
+        """
 
-        evaluation.overall_score = (
-            evaluation.quality_score * self.settings.WEIGHT_QUALITY
-            + evaluation.performance_score * self.settings.WEIGHT_PERFORMANCE
-            + evaluation.security_score * self.settings.WEIGHT_SECURITY
-            + evaluation.task_completion_score * self.settings.WEIGHT_TASK_COMPLETION
+        def weighted_mean(scores: list, weights: list) -> Optional[float]:
+            pairs = [(s, w) for s, w in zip(scores, weights) if w and w > 0]
+            if not pairs:
+                return None
+            total_w = sum(w for _, w in pairs)
+            return sum(s * w for s, w in pairs) / total_w
+
+        weights_by_dim = results.get("dimension_weights") or {}
+        dims = (
+            ("quality", self.settings.WEIGHT_QUALITY),
+            ("performance", self.settings.WEIGHT_PERFORMANCE),
+            ("security", self.settings.WEIGHT_SECURITY),
+            ("task_completion", self.settings.WEIGHT_TASK_COMPLETION),
         )
+
+        weighted: Dict[str, Optional[float]] = {}
+        for name, _ in dims:
+            scores = results["dimension_scores"][name]
+            weights = weights_by_dim.get(name) or [1.0] * len(scores)
+            # 后端兼容：老数据没有权重记录时按等权处理
+            weights = weights + [1.0] * (len(scores) - len(weights))
+            value = weighted_mean(scores, weights)
+            if value is None and scores:
+                # 该维度全部用例权重为 0 → 视为不适用，而非 0 分
+                value = None
+            weighted[name] = value
+
+        def to_hundred(value: Optional[float]) -> Optional[float]:
+            return None if value is None else value * 100
+
+        evaluation.quality_score = to_hundred(weighted["quality"])
+        evaluation.performance_score = to_hundred(weighted["performance"])
+        evaluation.security_score = to_hundred(weighted["security"])
+        evaluation.task_completion_score = to_hundred(weighted["task_completion"])
+
+        applied = [(name, gw) for name, gw in dims if weighted.get(name) is not None]
+        total_weight = sum(gw for _, gw in applied)
+        if total_weight > 0:
+            evaluation.overall_score = sum(
+                (weighted[name] or 0.0) * 100 * gw for name, gw in applied
+            ) / total_weight
+        else:
+            evaluation.overall_score = 0.0
+
+        results["applied_dimensions"] = [name for name, _ in applied]
 
         evaluation.total_cases = results["total_cases"]
         evaluation.successful_cases = results["successful"]

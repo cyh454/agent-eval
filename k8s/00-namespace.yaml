@@ -1,0 +1,8 @@
+# 独立命名空间：把评测平台和集群里其他东西隔开，也便于整体删除
+# （kubectl delete ns agent-eval 一次性清空，不用逐资源删）
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-eval
+  labels:
+    app.kubernetes.io/part-of: agent-eval
